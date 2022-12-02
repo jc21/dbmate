@@ -1,88 +1,95 @@
 package dbmate
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseMigrationContents(t *testing.T) {
-	// It supports the typical use case.
-	migration := `-- migrate:up
+	type want struct {
+		up                   string
+		down                 string
+		upSlave              string
+		downSlave            string
+		upTransaction        bool
+		downTransaction      bool
+		upSlaveTransaction   bool
+		downSlaveTransaction bool
+		err                  error
+	}
+
+	tests := []struct {
+		name     string
+		contents string
+		want     want
+	}{
+		{
+			name: "Typical use case",
+			contents: `-- migrate:up
 create table users (id serial, name text);
 -- migrate:down
-drop table users;`
-
-	up, down, err := parseMigrationContents(migration)
-	require.Nil(t, err)
-
-	require.Equal(t, "-- migrate:up\ncreate table users (id serial, name text);\n", up.Contents)
-	require.Equal(t, true, up.Options.Transaction())
-
-	require.Equal(t, "-- migrate:down\ndrop table users;", down.Contents)
-	require.Equal(t, true, down.Options.Transaction())
-
-	// It does not require space between the '--' and 'migrate'
-	migration = `
+drop table users;`,
+			want: want{
+				up:              "-- migrate:up\ncreate table users (id serial, name text);",
+				down:            "-- migrate:down\ndrop table users;",
+				upTransaction:   true,
+				downTransaction: true,
+			},
+		},
+		{
+			name: "does not require space between the '--' and 'migrate'",
+			contents: `
 --migrate:up
 create table users (id serial, name text);
 
 --migrate:down
 drop table users;
-`
-
-	up, down, err = parseMigrationContents(migration)
-	require.Nil(t, err)
-
-	require.Equal(t, "--migrate:up\ncreate table users (id serial, name text);\n\n", up.Contents)
-	require.Equal(t, true, up.Options.Transaction())
-
-	require.Equal(t, "--migrate:down\ndrop table users;\n", down.Contents)
-	require.Equal(t, true, down.Options.Transaction())
-
-	// It is acceptable for down to be defined before up
-	migration = `-- migrate:down
+`,
+			want: want{
+				up:              "--migrate:up\ncreate table users (id serial, name text);\n",
+				down:            "--migrate:down\ndrop table users;\n",
+				upTransaction:   true,
+				downTransaction: true,
+			},
+		},
+		{
+			name: "down to be defined before up",
+			contents: `-- migrate:down
 drop table users;
 -- migrate:up
 create table users (id serial, name text);
-`
-
-	up, down, err = parseMigrationContents(migration)
-	require.Nil(t, err)
-
-	require.Equal(t, "-- migrate:up\ncreate table users (id serial, name text);\n", up.Contents)
-	require.Equal(t, true, up.Options.Transaction())
-
-	require.Equal(t, "-- migrate:down\ndrop table users;\n", down.Contents)
-	require.Equal(t, true, down.Options.Transaction())
-
-	// It supports turning transactions off for a given migration block,
-	// e.g., the below would not work in Postgres inside a transaction.
-	// It also supports omitting the down block.
-	migration = `-- migrate:up transaction:false
+`,
+			want: want{
+				up:              "-- migrate:up\ncreate table users (id serial, name text);\n",
+				down:            "-- migrate:down\ndrop table users;",
+				upTransaction:   true,
+				downTransaction: true,
+			},
+		},
+		{
+			name: "turning transactions off for a given migration block",
+			contents: `-- migrate:up transaction:false
 ALTER TYPE colors ADD VALUE 'orange' AFTER 'red';
-`
-
-	up, down, err = parseMigrationContents(migration)
-	require.Nil(t, err)
-
-	require.Equal(t, "-- migrate:up transaction:false\nALTER TYPE colors ADD VALUE 'orange' AFTER 'red';\n", up.Contents)
-	require.Equal(t, false, up.Options.Transaction())
-
-	require.Equal(t, "", down.Contents)
-	require.Equal(t, true, down.Options.Transaction())
-
-	// It does *not* support omitting the up block.
-	migration = `-- migrate:down
+`,
+			want: want{
+				up:            "-- migrate:up transaction:false\nALTER TYPE colors ADD VALUE 'orange' AFTER 'red';\n",
+				upTransaction: false,
+			},
+		},
+		{
+			name: "It does *not* support omitting the up block",
+			contents: `-- migrate:down
 drop table users;
-`
-
-	_, _, err = parseMigrationContents(migration)
-	require.NotNil(t, err)
-	require.Equal(t, "dbmate requires each migration to define an up block with '-- migrate:up'", err.Error())
-
-	// It allows leading comments and whitespace preceding the migrate blocks
-	migration = `
+`,
+			want: want{
+				err: errors.New("dbmate requires each migration to define an up block with '-- migrate:up'"),
+			},
+		},
+		{
+			name: "allows leading comments and whitespace preceding the migrate blocks",
+			contents: `
 -- This migration creates the users table.
 -- It'll drop it in the event of a rollback.
 
@@ -91,19 +98,17 @@ create table users (id serial, name text);
 
 -- migrate:down
 drop table users;
-`
-
-	up, down, err = parseMigrationContents(migration)
-	require.Nil(t, err)
-
-	require.Equal(t, "-- migrate:up\ncreate table users (id serial, name text);\n\n", up.Contents)
-	require.Equal(t, true, up.Options.Transaction())
-
-	require.Equal(t, "-- migrate:down\ndrop table users;\n", down.Contents)
-	require.Equal(t, true, down.Options.Transaction())
-
-	// It does *not* allow arbitrary statements preceding the migrate blocks
-	migration = `
+`,
+			want: want{
+				up:              "-- migrate:up\ncreate table users (id serial, name text);\n",
+				upTransaction:   true,
+				down:            "-- migrate:down\ndrop table users;\n",
+				downTransaction: true,
+			},
+		},
+		{
+			name: "does *not* allow arbitrary statements preceding the migrate blocks",
+			contents: `
 -- create status_type
 CREATE TYPE status_type AS ENUM ('active', 'inactive');
 
@@ -114,19 +119,79 @@ ADD COLUMN status status_type DEFAULT 'active';
 -- migrate:down
 ALTER TABLE users
 DROP COLUMN status;
-`
-
-	_, _, err = parseMigrationContents(migration)
-	require.NotNil(t, err)
-	require.Equal(t, "dbmate does not support statements defined outside of the '-- migrate:up' or '-- migrate:down' blocks", err.Error())
-
-	// It requires an at least an up block
-	migration = `
+`,
+			want: want{
+				err: ErrParseUnexpectedStmt,
+			},
+		},
+		{
+			name: "requires an at least an up block",
+			contents: `
 ALTER TABLE users
 ADD COLUMN status status_type DEFAULT 'active';
-`
+`,
+			want: want{
+				err: ErrParseMissingUp,
+			},
+		},
+		{
+			name: "does not allow duplicate blocks",
+			contents: `
+-- migrate:up
+ADD COLUMN status status_type DEFAULT 'active';
 
-	_, _, err = parseMigrationContents(migration)
-	require.NotNil(t, err)
-	require.Equal(t, "dbmate requires each migration to define an up block with '-- migrate:up'", err.Error())
+-- migrate:up transaction:false
+ADD COLUMN status status_type DEFAULT 'active';
+`,
+			want: want{
+				err: ErrParseDuplicateBlock,
+			},
+		},
+		{
+			name: "Slaves",
+			contents: `-- migrate:up
+create table users (id serial, name text);
+-- migrate:up:slave
+create table users (id serial, name text);
+-- migrate:down
+drop table users;
+-- migrate:down:slave
+drop table users;`,
+			want: want{
+				up:                   "-- migrate:up\ncreate table users (id serial, name text);",
+				upSlave:              "-- migrate:up:slave\ncreate table users (id serial, name text);",
+				down:                 "-- migrate:down\ndrop table users;",
+				downSlave:            "-- migrate:down:slave\ndrop table users;",
+				upTransaction:        true,
+				upSlaveTransaction:   true,
+				downTransaction:      true,
+				downSlaveTransaction: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up, down, upSlave, downSlave, err := parseMigrationContents(tt.contents)
+			assert.Equal(t, tt.want.err, err)
+			if tt.want.err == nil {
+				assert.Equal(t, tt.want.up, up.Contents)
+				assert.Equal(t, tt.want.down, down.Contents)
+				assert.Equal(t, tt.want.upSlave, upSlave.Contents)
+				assert.Equal(t, tt.want.downSlave, downSlave.Contents)
+				if tt.want.up != "" {
+					assert.Equal(t, tt.want.upTransaction, up.Options.Transaction())
+				}
+				if tt.want.down != "" {
+					assert.Equal(t, tt.want.downTransaction, down.Options.Transaction())
+				}
+				if tt.want.upSlave != "" {
+					assert.Equal(t, tt.want.upSlaveTransaction, upSlave.Options.Transaction())
+				}
+				if tt.want.downSlave != "" {
+					assert.Equal(t, tt.want.downSlaveTransaction, downSlave.Options.Transaction())
+				}
+			}
+		})
+	}
 }

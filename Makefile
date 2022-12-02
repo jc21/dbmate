@@ -40,7 +40,7 @@ ls:
 
 .PHONY: test
 test:
-	go test -p 1 $(FLAGS) ./...
+	go test -json -cover -p 1 $(FLAGS) ./... | tparse
 
 .PHONY: lint
 lint:
@@ -61,6 +61,7 @@ docker-all:
 	docker-compose pull
 	docker-compose build
 	docker-compose run --rm dev make all
+	docker-compose down
 
 .PHONY: docker-sh
 docker-sh:

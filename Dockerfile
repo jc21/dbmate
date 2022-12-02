@@ -16,6 +16,9 @@ RUN apt-get update \
 RUN curl -fsSL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
 	| sh -s -- -b /usr/local/bin v1.50.1
 
+# tparse
+RUN go install github.com/mfridman/tparse@latest
+
 # download modules
 COPY go.* /src/
 RUN go mod download

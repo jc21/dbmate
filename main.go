@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/urfave/cli/v2"
@@ -40,10 +41,21 @@ func NewApp() *cli.App {
 			Usage:   "specify the database URL",
 		},
 		&cli.StringFlag{
+			Name:    "slave-url",
+			Aliases: []string{"l"},
+			Usage:   "specify the slave database URL(s)",
+		},
+		&cli.StringFlag{
 			Name:    "env",
 			Aliases: []string{"e"},
 			Value:   "DATABASE_URL",
 			Usage:   "specify an environment variable containing the database URL",
+		},
+		&cli.StringFlag{
+			Name:    "slave-env",
+			Aliases: []string{"n"},
+			Value:   "SLAVE_DATABASE_URL",
+			Usage:   "specify an environment variable containing the slave database URL(s)",
 		},
 		&cli.StringFlag{
 			Name:    "migrations-dir",
@@ -225,7 +237,13 @@ func action(f func(*dbmate.DB, *cli.Context) error) cli.ActionFunc {
 		if err != nil {
 			return err
 		}
-		db := dbmate.New(u)
+
+		s, err := getDatabaseSlaveURLs(c)
+		if err != nil {
+			return err
+		}
+
+		db := dbmate.New(u, s)
 		db.AutoDumpSchema = !c.Bool("no-dump-schema")
 		db.MigrationsDir = c.String("migrations-dir")
 		db.MigrationsTableName = c.String("migrations-table")
@@ -251,6 +269,28 @@ func getDatabaseURL(c *cli.Context) (u *url.URL, err error) {
 	}
 
 	return url.Parse(value)
+}
+
+// getDatabaseSlaveURLs returns the current slave database url(s) from cli flag or environment variable
+func getDatabaseSlaveURLs(c *cli.Context) (s []*url.URL, err error) {
+	// check --slave-url flag first
+	value := c.String("slave-url")
+	if value == "" {
+		// if empty, default to --slave-env or SLAVE_DATABASE_URL
+		env := c.String("slave-env")
+		value = os.Getenv(env)
+	}
+
+	// split string of urls into slice of url objects
+	urls := strings.Split(value, ",")
+	for _, sl := range urls {
+		if u, parseErr := url.Parse(sl); parseErr != nil {
+			err = parseErr
+		} else {
+			s = append(s, u)
+		}
+	}
+	return
 }
 
 // redactLogString attempts to redact passwords from errors

@@ -152,6 +152,26 @@ func MustParseURL(s string) *url.URL {
 	return u
 }
 
+// MustParseURLs parses multiple URLs from string, and panics if it fails.
+// URLs are separated by a comma
+// It is used during testing and in cases where we are parsing a generated URL.
+func MustParseURLs(v string) (s []*url.URL) {
+	if v == "" {
+		panic("missing url")
+	}
+
+	// split string of urls into slice of url objects
+	urls := strings.Split(v, ",")
+	for _, sl := range urls {
+		if u, parseErr := url.Parse(sl); parseErr != nil {
+			panic(parseErr)
+		} else {
+			s = append(s, u)
+		}
+	}
+	return
+}
+
 // MustUnescapePath unescapes a URL path, and panics if it fails.
 // It is used during in cases where we are parsing a generated path.
 func MustUnescapePath(s string) string {

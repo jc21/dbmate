@@ -129,6 +129,8 @@ The following options are available with all commands. You must use command line
 
 - `--url, -u "protocol://host:port/dbname"` - specify the database url directly. _(env: `$DATABASE_URL`)_
 - `--env, -e "DATABASE_URL"` - specify an environment variable to read the database connection URL from.
+* `--slave-url, -l "protocol://host:port/dbname"` - specify the database slave url directly. _(env: `$DATABASE_SLAVE_URL`)_
+* `--slave-env, -n "DATABASE_SLAVE_URL"` - specify an environment variable to read the slave database connection URL from.
 - `--migrations-dir, -d "./db/migrations"` - where to keep the migration files. _(env: `$DBMATE_MIGRATIONS_DIR`)_
 - `--migrations-table "schema_migrations"` - database table to record migrations in. _(env: `$DBMATE_MIGRATIONS_TABLE`)_
 - `--schema-file, -s "./db/schema.sql"` - a path to keep the schema.sql file. _(env: `$DBMATE_SCHEMA_FILE`)_
@@ -186,6 +188,25 @@ $ dbmate -u "postgres://postgres@127.0.0.1:5432/myapp_test?sslmode=disable" up
 ```
 
 The only advantage of using `dbmate -e TEST_DATABASE_URL` over `dbmate -u $TEST_DATABASE_URL` is that the former takes advantage of dbmate's automatic `.env` file loading.
+
+#### Replication
+
+In some rare cases you may want `dbmate` to run queries on your slave databases. You can specify one or more replication slaves and a specific section in the migration files to use.
+
+The `SLAVE_DATABASE_URL` parameter follows the same connection string as the `DATABASE_URL` parameter, however you can also define multiple connections separated by a comma.
+
+```sh
+$ dbmate -u "postgres://postgres@127.0.0.1:5432/myapp_test?sslmode=disable" \
+  -l "postgres://postgres@10.0.0.1:5432/myapp_test?sslmode=disable" \
+  up
+# or multiple:
+$ dbmate -u "postgres://postgres@127.0.0.1:5432/myapp_test?sslmode=disable" \
+  -l "postgres://postgres@10.0.0.1:5432/myapp_test?sslmode=disable,postgres://postgres@10.0.0.2:5432/myapp_test?sslmode=disable" \
+  up
+```
+
+When slaves are provided, their sql will be executed on each slave first and then the master connection. To support possible sql errors when running on different servers,
+it's highly recommended to write the `down` section for the slaves so that `dbmate` can automatically rollback when a problem occurs down the line.
 
 #### PostgreSQL
 
@@ -276,6 +297,24 @@ create table users (
 ```
 
 > Note: Migration files are named in the format `[version]_[description].sql`. Only the version (defined as all leading numeric characters in the file name) is recorded in the database, so you can safely rename a migration file without having any effect on its current application state.
+
+#### Slave Migrations
+
+To support slave queries, add the following sections:
+
+```sql
+-- migrate:up slave:true
+
+create table users (
+  id integer,
+  name varchar(255),
+  email varchar(255) not null
+);
+
+-- migrate:down slave:true
+
+drop table users;
+```
 
 ### Running Migrations
 

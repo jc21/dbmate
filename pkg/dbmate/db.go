@@ -35,6 +35,7 @@ var (
 	ErrNoMigrationFiles      = errors.New("no migration files found")
 	ErrInvalidURL            = errors.New("invalid url, have you set your --url flag or DATABASE_URL environment variable?")
 	ErrNoRollback            = errors.New("can't rollback: no migrations have been applied")
+	ErrNoRollbackSlaves      = errors.New("can't rollback: slave(s) are out of sync with master")
 	ErrCantConnect           = errors.New("unable to connect to database")
 	ErrUnsupportedDriver     = errors.New("unsupported driver")
 	ErrNoMigrationName       = errors.New("please specify a name for the new migration")
@@ -48,6 +49,7 @@ var (
 type DB struct {
 	AutoDumpSchema      bool
 	DatabaseURL         *url.URL
+	SlaveDatabases      []*url.URL
 	MigrationsDir       string
 	MigrationsTableName string
 	SchemaFile          string
@@ -68,10 +70,11 @@ type StatusResult struct {
 }
 
 // New initializes a new dbmate database
-func New(databaseURL *url.URL) *DB {
+func New(databaseURL *url.URL, slaveDatabases []*url.URL) *DB {
 	return &DB{
 		AutoDumpSchema:      true,
 		DatabaseURL:         databaseURL,
+		SlaveDatabases:      slaveDatabases,
 		MigrationsDir:       DefaultMigrationsDir,
 		MigrationsTableName: DefaultMigrationsTableName,
 		SchemaFile:          DefaultSchemaFile,
@@ -102,6 +105,46 @@ func (db *DB) GetDriver() (Driver, error) {
 	return driverFunc(config), nil
 }
 
+// GetSlaveDrivers initializes the appropriate slave drivers
+func (db *DB) GetSlaveDrivers() ([]Driver, error) {
+	if len(db.SlaveDatabases) == 0 {
+		return nil, nil
+	}
+
+	d := make([]Driver, 0)
+	for _, slave := range db.SlaveDatabases {
+		driverFunc := drivers[slave.Scheme]
+		if driverFunc == nil {
+			return nil, fmt.Errorf("%w: %s", ErrUnsupportedDriver, slave.Scheme)
+		}
+		d = append(d, driverFunc(DriverConfig{
+			DatabaseURL:         slave,
+			MigrationsTableName: db.MigrationsTableName,
+			Log:                 db.Log,
+		}))
+	}
+
+	return d, nil
+}
+
+// GetAllDrivers initializes the appropriate main driver and includes slaves
+func (db *DB) GetAllDrivers() ([]Driver, error) {
+	drv, err := db.GetDriver()
+	if err != nil {
+		return nil, err
+	}
+
+	slavesDrv, err := db.GetSlaveDrivers()
+	if err != nil {
+		return nil, err
+	}
+
+	d := []Driver{drv}
+	d = append(d, slavesDrv...)
+
+	return d, nil
+}
+
 // Wait blocks until the database server is available. It does not verify that
 // the specified database exists, only that the host is ready to accept connections.
 func (db *DB) Wait() error {
@@ -110,34 +153,42 @@ func (db *DB) Wait() error {
 		return err
 	}
 
-	return db.wait(drv)
+	return db.wait([]Driver{drv})
 }
 
-func (db *DB) wait(drv Driver) error {
-	// attempt connection to database server
-	err := drv.Ping()
-	if err == nil {
-		// connection successful
-		return nil
-	}
-
-	fmt.Fprint(db.Log, "Waiting for database")
-	for i := 0 * time.Second; i < db.WaitTimeout; i += db.WaitInterval {
-		fmt.Fprint(db.Log, ".")
-		time.Sleep(db.WaitInterval)
-
+func (db *DB) wait(d []Driver) error {
+	for _, drv := range d {
+		successful := false
 		// attempt connection to database server
-		err = drv.Ping()
+		err := drv.Ping()
 		if err == nil {
 			// connection successful
+			successful = true
+		}
+
+		if !successful {
+			fmt.Fprint(db.Log, "Waiting for database")
+			for i := 0 * time.Second; i < db.WaitTimeout; i += db.WaitInterval {
+				fmt.Fprint(db.Log, ".")
+				time.Sleep(db.WaitInterval)
+
+				// attempt connection to database server
+				err = drv.Ping()
+				if err == nil {
+					// connection successful
+					fmt.Fprint(db.Log, "\n")
+					successful = true
+				}
+			}
+		}
+
+		// if we find outselves here, we could not connect within the timeout
+		if !successful {
 			fmt.Fprint(db.Log, "\n")
-			return nil
+			return fmt.Errorf("%w: %s", ErrCantConnect, err)
 		}
 	}
-
-	// if we find outselves here, we could not connect within the timeout
-	fmt.Fprint(db.Log, "\n")
-	return fmt.Errorf("%w: %s", ErrCantConnect, err)
+	return nil
 }
 
 // CreateAndMigrate creates the database (if necessary) and runs migrations
@@ -147,9 +198,15 @@ func (db *DB) CreateAndMigrate() error {
 		return err
 	}
 
+	slavesDrv, err := db.GetSlaveDrivers()
+	if err != nil {
+		return err
+	}
+
 	if db.WaitBefore {
-		err := db.wait(drv)
-		if err != nil {
+		d := []Driver{drv}
+		d = append(d, slavesDrv...)
+		if err := db.wait(d); err != nil {
 			return err
 		}
 	}
@@ -164,42 +221,75 @@ func (db *DB) CreateAndMigrate() error {
 		}
 	}
 
+	// create slave databases if they don't exist
+	for _, slaveDrv := range slavesDrv {
+		exists, err := slaveDrv.DatabaseExists()
+		if err == nil && !exists {
+			if err := slaveDrv.CreateDatabase(); err != nil {
+				return err
+			}
+		}
+	}
+
 	// migrate
-	return db.migrate(drv)
+	return db.migrate(drv, slavesDrv)
 }
 
-// Create creates the current database
+// Create creates the current database and any slaves
 func (db *DB) Create() error {
 	drv, err := db.GetDriver()
 	if err != nil {
 		return err
 	}
 
-	if db.WaitBefore {
-		err := db.wait(drv)
-		if err != nil {
-			return err
-		}
-	}
-
-	return drv.CreateDatabase()
-}
-
-// Drop drops the current database (if it exists)
-func (db *DB) Drop() error {
-	drv, err := db.GetDriver()
+	slavesDrv, err := db.GetSlaveDrivers()
 	if err != nil {
 		return err
 	}
 
+	drvs := []Driver{drv}
+	drvs = append(drvs, slavesDrv...)
+
 	if db.WaitBefore {
-		err := db.wait(drv)
-		if err != nil {
+		if err := db.wait(drvs); err != nil {
 			return err
 		}
 	}
 
-	return drv.DropDatabase()
+	for _, d := range drvs {
+		if err := d.CreateDatabase(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Drop drops the current database (if it exists) and any slaves
+func (db *DB) Drop() error {
+	drvs, err := db.GetAllDrivers()
+	if err != nil {
+		return err
+	}
+
+	slavesDrv, err := db.GetSlaveDrivers()
+	if err != nil {
+		return err
+	}
+
+	drvs = append(drvs, slavesDrv...)
+
+	if db.WaitBefore {
+		if err := db.wait(drvs); err != nil {
+			return err
+		}
+	}
+
+	for _, drv := range drvs {
+		if err := drv.DropDatabase(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DumpSchema writes the current database schema to a file
@@ -214,7 +304,7 @@ func (db *DB) DumpSchema() error {
 
 func (db *DB) dumpSchema(drv Driver) error {
 	if db.WaitBefore {
-		err := db.wait(drv)
+		err := db.wait([]Driver{drv})
 		if err != nil {
 			return err
 		}
@@ -324,10 +414,15 @@ func (db *DB) Migrate() error {
 		return err
 	}
 
-	return db.migrate(drv)
+	slavesDrv, err := db.GetSlaveDrivers()
+	if err != nil {
+		return err
+	}
+
+	return db.migrate(drv, slavesDrv)
 }
 
-func (db *DB) migrate(drv Driver) error {
+func (db *DB) migrate(drv Driver, slavesDrv []Driver) error {
 	files, err := findMigrationFiles(db.MigrationsDir, migrationFileRegexp)
 	if err != nil {
 		return err
@@ -338,7 +433,11 @@ func (db *DB) migrate(drv Driver) error {
 	}
 
 	if db.WaitBefore {
-		err := db.wait(drv)
+		err := db.wait([]Driver{drv})
+		if err != nil {
+			return err
+		}
+		err = db.wait(slavesDrv)
 		if err != nil {
 			return err
 		}
@@ -355,43 +454,103 @@ func (db *DB) migrate(drv Driver) error {
 		return err
 	}
 
+	// Open slaves and
+	// Fetch applied to Slaves, indexed the same
+	appliedSlaves := make([]map[string]bool, len(slavesDrv))
+	slaveSQLDbs := make([]*sql.DB, len(slavesDrv))
+	if len(slavesDrv) > 0 {
+		for idx, slaveDrv := range slavesDrv {
+			slaveSQLDbs[idx], err = db.openDatabaseForMigration(slaveDrv)
+			if err != nil {
+				return err
+			}
+			defer dbutil.MustClose(slaveSQLDbs[idx])
+
+			appliedSlaves[idx], err = slaveDrv.SelectMigrations(slaveSQLDbs[idx], -1)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	for _, filename := range files {
 		ver := migrationVersion(filename)
-		if ok := applied[ver]; ok {
-			// migration already applied
+		applyToMaster := false
+		applyToSlaves := make([]int, 0)
+
+		if ok := applied[ver]; !ok {
+			// migration already applied to master
+			applyToMaster = true
+		}
+
+		if len(slavesDrv) > 0 {
+			for idx := range slavesDrv {
+				if ok := appliedSlaves[idx][ver]; !ok {
+					// This slave doesn't have the migration
+					applyToSlaves = append(applyToSlaves, idx)
+				}
+			}
+		}
+
+		if !applyToMaster && len(applyToSlaves) == 0 {
 			continue
 		}
 
-		fmt.Fprintf(db.Log, "Applying: %s\n", filename)
+		fmt.Fprintf(db.Log, "Applying: %s (master: %v, slaves: %d)\n", filename, applyToMaster, len(applyToSlaves))
 
-		up, _, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
+		up, _, upSlave, _, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
 		if err != nil {
 			return err
 		}
 
-		execMigration := func(tx dbutil.Transaction) error {
-			// run actual migration
-			result, err := tx.Exec(up.Contents)
-			if err != nil {
-				return err
-			} else if db.Verbose {
-				db.printVerbose(result)
+		getExecMigration := func(d Driver, m Migration) func(tx dbutil.Transaction) error {
+			return func(tx dbutil.Transaction) error {
+				// run actual migration
+				result, err := tx.Exec(m.Contents)
+				if err != nil {
+					return err
+				} else if db.Verbose {
+					db.printVerbose(result)
+				}
+
+				// record migration
+				return d.InsertMigration(tx, ver)
 			}
-
-			// record migration
-			return drv.InsertMigration(tx, ver)
 		}
 
-		if up.Options.Transaction() {
-			// begin transaction
-			err = doTransaction(sqlDB, execMigration)
-		} else {
-			// run outside of transaction
-			err = execMigration(sqlDB)
+		// Apply to Slaves first and fail early
+		if len(slavesDrv) > 0 {
+			for idx, slaveDrv := range slavesDrv {
+				upSlaveTx := getExecMigration(slaveDrv, upSlave)
+				if upSlave.Options.Transaction() {
+					// begin transaction
+					err = doTransaction(slaveSQLDbs[idx], upSlaveTx)
+				} else {
+					// run outside of transaction
+					err = upSlaveTx(slaveSQLDbs[idx])
+				}
+				if err != nil {
+					fmt.Printf("- Failed on slave #%d: %s", idx+1, err.Error())
+					return err
+				}
+				fmt.Printf("- Applied to slave #%d\n", idx+1)
+			}
 		}
 
-		if err != nil {
-			return err
+		if applyToMaster {
+			upTx := getExecMigration(drv, up)
+			if up.Options.Transaction() {
+				// begin transaction
+				err = doTransaction(sqlDB, upTx)
+			} else {
+				// run outside of transaction
+				err = upTx(sqlDB)
+			}
+			if err != nil {
+				fmt.Printf("- Failed on master: %s", err.Error())
+				return err
+			}
+			fmt.Println("- Applied to master")
 		}
 	}
 
@@ -470,8 +629,17 @@ func (db *DB) Rollback() error {
 		return err
 	}
 
+	slavesDrv, err := db.GetSlaveDrivers()
+	if err != nil {
+		return err
+	}
+
 	if db.WaitBefore {
-		err := db.wait(drv)
+		err := db.wait([]Driver{drv})
+		if err != nil {
+			return err
+		}
+		err = db.wait(slavesDrv)
 		if err != nil {
 			return err
 		}
@@ -502,36 +670,84 @@ func (db *DB) Rollback() error {
 		return err
 	}
 
+	// Open slaves and
+	// Fetch applied to Slaves, indexed the same
+	appliedSlaves := make([]map[string]bool, len(slavesDrv))
+	slaveSQLDbs := make([]*sql.DB, len(slavesDrv))
+	if len(slavesDrv) > 0 {
+		for idx, slaveDrv := range slavesDrv {
+			slaveSQLDbs[idx], err = db.openDatabaseForMigration(slaveDrv)
+			if err != nil {
+				return err
+			}
+			defer dbutil.MustClose(slaveSQLDbs[idx])
+
+			appliedSlaves[idx], err = slaveDrv.SelectMigrations(slaveSQLDbs[idx], 1)
+			if err != nil {
+				return err
+			}
+			// Ensure slave has same last version as master
+			for slaveVer := range appliedSlaves[idx] {
+				if slaveVer != latest {
+					return ErrNoRollbackSlaves
+				}
+			}
+		}
+	}
+
 	fmt.Fprintf(db.Log, "Rolling back: %s\n", filename)
 
-	_, down, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
+	_, down, _, downSlave, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
 	if err != nil {
 		return err
 	}
 
-	execMigration := func(tx dbutil.Transaction) error {
-		// rollback migration
-		result, err := tx.Exec(down.Contents)
-		if err != nil {
-			return err
-		} else if db.Verbose {
-			db.printVerbose(result)
-		}
+	getExecMigration := func(d Driver, m Migration) func(tx dbutil.Transaction) error {
+		return func(tx dbutil.Transaction) error {
+			// rollback migration
+			result, err := tx.Exec(m.Contents)
+			if err != nil {
+				return err
+			} else if db.Verbose {
+				db.printVerbose(result)
+			}
 
-		// remove migration record
-		return drv.DeleteMigration(tx, latest)
+			// remove migration record
+			return d.DeleteMigration(tx, latest)
+		}
 	}
 
+	downTx := getExecMigration(drv, down)
 	if down.Options.Transaction() {
 		// begin transaction
-		err = doTransaction(sqlDB, execMigration)
+		err = doTransaction(sqlDB, downTx)
 	} else {
 		// run outside of transaction
-		err = execMigration(sqlDB)
+		err = downTx(sqlDB)
 	}
-
 	if err != nil {
+		fmt.Printf("- Failed on master: %s", err.Error())
 		return err
+	}
+	fmt.Println("- Applied to master")
+
+	// Do slaves next
+	if len(slavesDrv) > 0 {
+		for idx, slaveDrv := range slavesDrv {
+			downSlaveTx := getExecMigration(slaveDrv, downSlave)
+			if downSlave.Options.Transaction() {
+				// begin transaction
+				err = doTransaction(slaveSQLDbs[idx], downSlaveTx)
+			} else {
+				// run outside of transaction
+				err = downSlaveTx(slaveSQLDbs[idx])
+			}
+			if err != nil {
+				fmt.Printf("- Failed on slave #%d: %s", idx+1, err.Error())
+				return err
+			}
+			fmt.Printf("- Applied to slave #%d\n", idx+1)
+		}
 	}
 
 	// automatically update schema file, silence errors

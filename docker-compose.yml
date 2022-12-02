@@ -9,18 +9,19 @@ services:
     depends_on:
       - mysql
       - postgres
+      - postgres-slave
       - clickhouse
     environment:
       CLICKHOUSE_TEST_URL: clickhouse://clickhouse:9000?database=dbmate_test
       MYSQL_TEST_URL: mysql://root:root@mysql/dbmate_test
       POSTGRES_TEST_URL: postgres://postgres:postgres@postgres/dbmate_test?sslmode=disable
+      POSTGRES_TEST_URL_SLAVE: postgres://postgres:postgres@postgres-slave/dbmate_test?sslmode=disable
       SQLITE_TEST_URL: sqlite3:/tmp/dbmate_test.sqlite3
 
   dbmate:
     build:
       context: .
       target: release
-    image: dbmate_release
 
   mysql:
     image: mysql/mysql-server:8.0
@@ -29,6 +30,11 @@ services:
       MYSQL_ROOT_PASSWORD: root
 
   postgres:
+    image: postgres:10
+    environment:
+      POSTGRES_PASSWORD: postgres
+
+  postgres-slave:
     image: postgres:10
     environment:
       POSTGRES_PASSWORD: postgres

@@ -31,71 +31,117 @@ func NewMigration() Migration {
 	return Migration{Contents: "", Options: make(migrationOptions)}
 }
 
-// parseMigration reads a migration file and returns (up Migration, down Migration, error)
-func parseMigration(path string) (Migration, Migration, error) {
+// parseMigration reads a migration file and returns (up, down, upSlave, downSlave Migration, error)
+func parseMigration(path string) (Migration, Migration, Migration, Migration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return NewMigration(), NewMigration(), err
+		return NewMigration(), NewMigration(), NewMigration(), NewMigration(), err
 	}
-	up, down, err := parseMigrationContents(string(data))
-	return up, down, err
+	return parseMigrationContents(string(data))
 }
 
 var (
 	upRegExp              = regexp.MustCompile(`(?m)^--\s*migrate:up(\s*$|\s+\S+)`)
 	downRegExp            = regexp.MustCompile(`(?m)^--\s*migrate:down(\s*$|\s+\S+)$`)
+	upSlaveRegExp         = regexp.MustCompile(`(?m)^--\s*migrate:up:slave(\s*$|\s+\S+)`)
+	downSlaveRegExp       = regexp.MustCompile(`(?m)^--\s*migrate:down:slave(\s*$|\s+\S+)$`)
 	emptyLineRegExp       = regexp.MustCompile(`^\s*$`)
 	commentLineRegExp     = regexp.MustCompile(`^\s*--`)
 	whitespaceRegExp      = regexp.MustCompile(`\s+`)
 	optionSeparatorRegExp = regexp.MustCompile(`:`)
-	blockDirectiveRegExp  = regexp.MustCompile(`^--\s*migrate:[up|down]]`)
+	blockDirectiveRegExp  = regexp.MustCompile(`^--\s*migrate:(up|down)(:slave)?`)
 )
 
 // Error codes
 var (
 	ErrParseMissingUp      = errors.New("dbmate requires each migration to define an up block with '-- migrate:up'")
-	ErrParseUnexpectedStmt = errors.New("dbmate does not support statements defined outside of the '-- migrate:up' or '-- migrate:down' blocks")
+	ErrParseUnexpectedStmt = errors.New("dbmate does not support statements defined outside of the '-- migrate:up', '-- migrate:up:slave', '-- migrate:down' or '-- migrate:down:slave' blocks")
+	ErrParseDuplicateBlock = errors.New("dbmate does not allow multiple blocks of the same type in the same file")
 )
 
 // parseMigrationContents parses the string contents of a migration.
-// It will return two Migration objects, the first representing the "up"
-// block and the second representing the "down" block. This function
-// requires that at least an up block was defined and will otherwise
-// return an error.
-func parseMigrationContents(contents string) (Migration, Migration, error) {
+// It will return four Migration objects, the first representing the "up"
+// block and the second representing the "down" block and then the slaves.
+// This function requires that at least an up block was defined and will
+// otherwise return an error. This supports migration blocks being in
+// any order. This will also ensure there are no duplicate blocks.
+func parseMigrationContents(contents string) (Migration, Migration, Migration, Migration, error) {
+	re := regexp.MustCompile(`(?m)^--\s*migrate\:(?:up|down)(?:\:slave)?( |\n)`)
+	reFinds := re.FindAllIndex([]byte(contents), -1)
+
+	blocks := make([][]int, 0)
+	firstBlockCharacter := -1
+
+	for idx, reFind := range reFinds {
+		// Set the start and end for this block to the find, and the end
+		thisBlock := []int{reFind[0], len(contents)}
+
+		// Set this var once, for use later when checking for sql outside of a block
+		if firstBlockCharacter < 0 {
+			firstBlockCharacter = reFind[0]
+		}
+
+		// if this is not the first block, then we want to set the end of the previous
+		// block to be the start of this one.
+		if idx > 0 {
+			blocks[idx-1][1] = reFind[0] - 1
+		}
+		blocks = append(blocks, thisBlock)
+	}
+
 	up := NewMigration()
 	down := NewMigration()
+	upSlave := NewMigration()
+	downSlave := NewMigration()
 
-	upDirectiveStart, upDirectiveEnd, hasDefinedUpBlock := getMatchPositions(contents, upRegExp)
-	downDirectiveStart, downDirectiveEnd, hasDefinedDownBlock := getMatchPositions(contents, downRegExp)
-
-	if !hasDefinedUpBlock {
-		return up, down, ErrParseMissingUp
-	} else if statementsPrecedeMigrateBlocks(contents, upDirectiveStart, downDirectiveStart) {
-		return up, down, ErrParseUnexpectedStmt
+	// Ensure there are blocks found
+	if len(blocks) == 0 {
+		return up, down, upSlave, downSlave, ErrParseMissingUp
 	}
 
-	upEnd := len(contents)
-	downEnd := len(contents)
+	for _, b := range blocks {
+		s := substring(contents, b[0], b[1])
 
-	if hasDefinedDownBlock && upDirectiveStart < downDirectiveStart {
-		upEnd = downDirectiveStart
-	} else if hasDefinedDownBlock && upDirectiveStart > downDirectiveStart {
-		downEnd = upDirectiveStart
-	} else {
-		downEnd = -1
+		if upRegExp.Find([]byte(s)) != nil {
+			if up.Contents != "" {
+				return up, down, upSlave, downSlave, ErrParseDuplicateBlock
+			}
+			up.Contents = s
+			up.Options = parseMigrationOptions(s)
+		}
+		if downRegExp.Find([]byte(s)) != nil {
+			if down.Contents != "" {
+				return up, down, upSlave, downSlave, ErrParseDuplicateBlock
+			}
+			down.Contents = s
+			down.Options = parseMigrationOptions(s)
+		}
+		if upSlaveRegExp.Find([]byte(s)) != nil {
+			if upSlave.Contents != "" {
+				return up, down, upSlave, downSlave, ErrParseDuplicateBlock
+			}
+			upSlave.Contents = s
+			upSlave.Options = parseMigrationOptions(s)
+		}
+		if downSlaveRegExp.Find([]byte(s)) != nil {
+			if downSlave.Contents != "" {
+				return up, down, upSlave, downSlave, ErrParseDuplicateBlock
+			}
+			downSlave.Contents = s
+			downSlave.Options = parseMigrationOptions(s)
+		}
 	}
 
-	upDirective := substring(contents, upDirectiveStart, upDirectiveEnd)
-	downDirective := substring(contents, downDirectiveStart, downDirectiveEnd)
+	// Ensure there is at least an up block
+	if up.Contents == "" {
+		return up, down, upSlave, downSlave, ErrParseMissingUp
+	}
 
-	up.Options = parseMigrationOptions(upDirective)
-	up.Contents = substring(contents, upDirectiveStart, upEnd)
+	if statementsPrecedeMigrateBlocks(contents, firstBlockCharacter) {
+		return up, down, upSlave, downSlave, ErrParseUnexpectedStmt
+	}
 
-	down.Options = parseMigrationOptions(downDirective)
-	down.Contents = substring(contents, downDirectiveStart, downEnd)
-
-	return up, down, nil
+	return up, down, upSlave, downSlave, nil
 }
 
 // parseMigrationOptions parses the migration options out of a block
@@ -153,14 +199,8 @@ func parseMigrationOptions(contents string) MigrationOptions {
 // -- migrate:up
 // create table users (id serial, status status_type);
 // `, 54, -1)
-func statementsPrecedeMigrateBlocks(contents string, upDirectiveStart, downDirectiveStart int) bool {
-	until := upDirectiveStart
-
-	if downDirectiveStart > -1 {
-		until = min(upDirectiveStart, downDirectiveStart)
-	}
-
-	lines := strings.Split(contents[0:until], "\n")
+func statementsPrecedeMigrateBlocks(contents string, firstBlockStart int) bool {
+	lines := strings.Split(contents[0:firstBlockStart], "\n")
 
 	for _, line := range lines {
 		if isEmptyLine(line) || isCommentLine(line) {
@@ -183,24 +223,9 @@ func isCommentLine(s string) bool {
 	return commentLineRegExp.MatchString(s)
 }
 
-func getMatchPositions(s string, re *regexp.Regexp) (int, int, bool) {
-	match := re.FindStringIndex(s)
-	if match == nil {
-		return -1, -1, false
-	}
-	return match[0], match[1], true
-}
-
 func substring(s string, begin, end int) string {
 	if begin == -1 || end == -1 {
 		return ""
 	}
 	return s[begin:end]
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

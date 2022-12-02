@@ -14,7 +14,7 @@ import (
 
 func testClickHouseDriver(t *testing.T) *Driver {
 	u := dbutil.MustParseURL(os.Getenv("CLICKHOUSE_TEST_URL"))
-	drv, err := dbmate.New(u).GetDriver()
+	drv, err := dbmate.New(u, nil).GetDriver()
 	require.NoError(t, err)
 
 	return drv.(*Driver)
@@ -39,7 +39,7 @@ func prepTestClickHouseDB(t *testing.T) *sql.DB {
 }
 
 func TestGetDriver(t *testing.T) {
-	db := dbmate.New(dbutil.MustParseURL("clickhouse://"))
+	db := dbmate.New(dbutil.MustParseURL("clickhouse://"), nil)
 	drvInterface, err := db.GetDriver()
 	require.NoError(t, err)
 
