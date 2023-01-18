@@ -107,7 +107,7 @@ func (db *DB) GetDriver() (Driver, error) {
 
 // GetSlaveDrivers initializes the appropriate slave drivers
 func (db *DB) GetSlaveDrivers() ([]Driver, error) {
-	if len(db.SlaveDatabases) == 0 {
+	if db.SlaveDatabases == nil {
 		return nil, nil
 	}
 

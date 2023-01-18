@@ -281,13 +281,15 @@ func getDatabaseSlaveURLs(c *cli.Context) (s []*url.URL, err error) {
 		value = os.Getenv(env)
 	}
 
-	// split string of urls into slice of url objects
-	urls := strings.Split(value, ",")
-	for _, sl := range urls {
-		if u, parseErr := url.Parse(sl); parseErr != nil {
-			err = parseErr
-		} else {
-			s = append(s, u)
+	if value != "" {
+		// split string of urls into slice of url objects
+		urls := strings.Split(value, ",")
+		for _, sl := range urls {
+			if u, parseErr := url.Parse(sl); parseErr != nil {
+				err = parseErr
+			} else {
+				s = append(s, u)
+			}
 		}
 	}
 	return
