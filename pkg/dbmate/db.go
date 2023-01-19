@@ -47,17 +47,18 @@ var (
 
 // DB allows dbmate actions to be performed on a specified database
 type DB struct {
-	AutoDumpSchema      bool
-	DatabaseURL         *url.URL
-	SlaveDatabases      []*url.URL
-	MigrationsDir       string
-	MigrationsTableName string
-	SchemaFile          string
-	Verbose             bool
-	WaitBefore          bool
-	WaitInterval        time.Duration
-	WaitTimeout         time.Duration
-	Log                 io.Writer
+	AutoDumpSchema           bool
+	DatabaseURL              *url.URL
+	SlaveDatabases           []*url.URL
+	MigrationsDir            string
+	MigrationsTableName      string
+	SlaveMigrationsTableName string
+	SchemaFile               string
+	Verbose                  bool
+	WaitBefore               bool
+	WaitInterval             time.Duration
+	WaitTimeout              time.Duration
+	Log                      io.Writer
 }
 
 // migrationFileRegexp pattern for valid migration files
@@ -72,16 +73,17 @@ type StatusResult struct {
 // New initializes a new dbmate database
 func New(databaseURL *url.URL, slaveDatabases []*url.URL) *DB {
 	return &DB{
-		AutoDumpSchema:      true,
-		DatabaseURL:         databaseURL,
-		SlaveDatabases:      slaveDatabases,
-		MigrationsDir:       DefaultMigrationsDir,
-		MigrationsTableName: DefaultMigrationsTableName,
-		SchemaFile:          DefaultSchemaFile,
-		WaitBefore:          false,
-		WaitInterval:        DefaultWaitInterval,
-		WaitTimeout:         DefaultWaitTimeout,
-		Log:                 os.Stdout,
+		AutoDumpSchema:           true,
+		DatabaseURL:              databaseURL,
+		SlaveDatabases:           slaveDatabases,
+		MigrationsDir:            DefaultMigrationsDir,
+		MigrationsTableName:      DefaultMigrationsTableName,
+		SlaveMigrationsTableName: DefaultMigrationsTableName,
+		SchemaFile:               DefaultSchemaFile,
+		WaitBefore:               false,
+		WaitInterval:             DefaultWaitInterval,
+		WaitTimeout:              DefaultWaitTimeout,
+		Log:                      os.Stdout,
 	}
 }
 
@@ -119,7 +121,7 @@ func (db *DB) GetSlaveDrivers() ([]Driver, error) {
 		}
 		d = append(d, driverFunc(DriverConfig{
 			DatabaseURL:         slave,
-			MigrationsTableName: db.MigrationsTableName,
+			MigrationsTableName: db.SlaveMigrationsTableName,
 			Log:                 db.Log,
 		}))
 	}
