@@ -339,3 +339,13 @@ func (drv *Driver) Ping() error {
 func (drv *Driver) quotedMigrationsTableName() string {
 	return drv.quoteIdentifier(drv.migrationsTableName)
 }
+
+// Returns a map of supported wildcards for this driver
+func (drv *Driver) GetWildcards() map[string]string {
+	p, _ := drv.databaseURL.User.Password()
+	return map[string]string{
+		"DB_NAME": drv.databaseName(),
+		"DB_USER": drv.databaseURL.User.Username(),
+		"DB_PASS": p,
+	}
+}

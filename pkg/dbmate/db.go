@@ -56,6 +56,7 @@ type DB struct {
 	SchemaFile               string
 	Verbose                  bool
 	WaitBefore               bool
+	ReplaceWildcards         bool
 	WaitInterval             time.Duration
 	WaitTimeout              time.Duration
 	Log                      io.Writer
@@ -508,7 +509,7 @@ func (db *DB) migrate(drv Driver, slavesDrv []Driver) error {
 		getExecMigration := func(d Driver, m Migration) func(tx dbutil.Transaction) error {
 			return func(tx dbutil.Transaction) error {
 				// run actual migration
-				result, err := tx.Exec(m.Contents)
+				result, err := tx.Exec(m.ContentsReplaced(drv, db.ReplaceWildcards))
 				if err != nil {
 					return err
 				} else if db.Verbose {
@@ -707,7 +708,7 @@ func (db *DB) Rollback() error {
 	getExecMigration := func(d Driver, m Migration) func(tx dbutil.Transaction) error {
 		return func(tx dbutil.Transaction) error {
 			// rollback migration
-			result, err := tx.Exec(m.Contents)
+			result, err := tx.Exec(m.ContentsReplaced(drv, db.ReplaceWildcards))
 			if err != nil {
 				return err
 			} else if db.Verbose {

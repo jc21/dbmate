@@ -380,8 +380,7 @@ func (drv *Driver) quotedMigrationsTableNameParts(db dbutil.Transaction) (string
 
 	if schema == "" {
 		// no schema specified with table name, try URL search path if available
-		searchPath := strings.Split(drv.databaseURL.Query().Get("search_path"), ",")
-		schema = strings.TrimSpace(searchPath[0])
+		schema = drv.getSearchPath(false)
 	}
 
 	var err error
@@ -410,4 +409,24 @@ func (drv *Driver) quotedMigrationsTableNameParts(db dbutil.Transaction) (string
 
 	// if more than one part, we already have a schema
 	return quotedNameParts[0], strings.Join(quotedNameParts[1:], "."), nil
+}
+
+func (drv *Driver) getSearchPath(defaultPublic bool) string {
+	searchPath := strings.Split(drv.databaseURL.Query().Get("search_path"), ",")
+	schema := strings.TrimSpace(searchPath[0])
+	if defaultPublic && schema == "" {
+		schema = "public"
+	}
+	return schema
+}
+
+// Returns a map of supported wildcards for this driver
+func (drv *Driver) GetWildcards() map[string]string {
+	p, _ := drv.databaseURL.User.Password()
+	return map[string]string{
+		"DB_NAME":   dbutil.DatabaseName(drv.databaseURL),
+		"DB_USER":   drv.databaseURL.User.Username(),
+		"DB_PASS":   p,
+		"DB_SCHEMA": drv.getSearchPath(true),
+	}
 }

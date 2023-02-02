@@ -2,6 +2,7 @@ package dbmate
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -24,6 +25,21 @@ func (m migrationOptions) Transaction() bool {
 type Migration struct {
 	Contents string
 	Options  MigrationOptions
+}
+
+func (m *Migration) ContentsReplaced(drv Driver, doReplacement bool) string {
+	if doReplacement {
+		w := drv.GetWildcards()
+		if len(w) > 0 {
+			// Replace Content with Wildcards
+			newContents := m.Contents
+			for wildcard, replacement := range w {
+				newContents = strings.ReplaceAll(newContents, fmt.Sprintf("{{%s}}", wildcard), replacement)
+			}
+			return newContents
+		}
+	}
+	return m.Contents
 }
 
 // NewMigration constructs a Migration object

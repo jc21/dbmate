@@ -253,3 +253,9 @@ func (drv *Driver) quotedMigrationsTableName() string {
 func (drv *Driver) quoteIdentifier(s string) string {
 	return pq.QuoteIdentifier(s)
 }
+
+// Returns a map of supported wildcards for this driver
+func (drv *Driver) GetWildcards() map[string]string {
+	// Nothing for sqlite, it has no auth or db connection details
+	return nil
+}

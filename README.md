@@ -136,6 +136,7 @@ The following options are available with all commands. You must use command line
 - `--no-dump-schema` - don't auto-update the schema.sql file on migrate/rollback _(env: `$DBMATE_NO_DUMP_SCHEMA`)_
 - `--wait` - wait for the db to become available before executing the subsequent command _(env: `$DBMATE_WAIT`)_
 - `--wait-timeout 60s` - timeout for --wait flag _(env: `$DBMATE_WAIT_TIMEOUT`)_
+- `--wildcards` - enable replacement of wildcards in sql content _(env: `$DBMATE_WILDCARDS`)_
 
 ## Usage
 
@@ -187,6 +188,26 @@ $ dbmate -u "postgres://postgres@127.0.0.1:5432/myapp_test?sslmode=disable" up
 ```
 
 The only advantage of using `dbmate -e TEST_DATABASE_URL` over `dbmate -u $TEST_DATABASE_URL` is that the former takes advantage of dbmate's automatic `.env` file loading.
+
+#### Wildcards
+
+Sometimes in your SQL you might want to apply permissions to the current database but this can be variable.
+
+To combat this, there is support for replacing wildcards in the SQL files when using the `--wildcards` flag.
+
+Supported wildcards for each driver:
+
+- *Postgres*
+  - `{{DB_NAME}}`
+  - `{{DB_USER}}`
+  - `{{DB_PASS}}`
+  - `{{DB_SCHEMA}}` - defaults to `public` if not part of the URL search path
+- *Mysql* and *Clickhouse*
+  - `{{DB_NAME}}`
+  - `{{DB_USER}}`
+  - `{{DB_PASS}}`
+- *SQLite*
+  - No wildcards are provided for this driver
 
 #### Replication
 

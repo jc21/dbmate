@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/amacneil/dbmate/pkg/dbutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -192,6 +193,110 @@ drop table users;`,
 					assert.Equal(t, tt.want.downSlaveTransaction, downSlave.Options.Transaction())
 				}
 			}
+		})
+	}
+}
+
+func TestParseMigrationContentsReplaced(t *testing.T) {
+	type want struct {
+		up   string
+		down string
+	}
+
+	tests := []struct {
+		name      string
+		wildcards bool
+		dbURL     string
+		contents  string
+		want      want
+	}{
+		{
+			name:      "Typical use case, wildcards disabled",
+			wildcards: false,
+			dbURL:     "postgres://postgres:postgres@postgres/dbmate_test?sslmode=disable",
+			contents: `-- migrate:up
+create table users (id serial, name text);
+-- migrate:down
+drop table users;`,
+			want: want{
+				up:   "-- migrate:up\ncreate table users (id serial, name text);",
+				down: "-- migrate:down\ndrop table users;",
+			},
+		},
+		{
+			name:      "Typical use case, wildcards enabled",
+			wildcards: true,
+			dbURL:     "postgres://replicant@postgres-slave/dbmate_test?sslmode=disable&search_path=microservices",
+			contents: `-- migrate:up
+create table users (id serial, name text);
+-- migrate:down
+drop table users;`,
+			want: want{
+				up:   "-- migrate:up\ncreate table users (id serial, name text);",
+				down: "-- migrate:down\ndrop table users;",
+			},
+		},
+		{
+			name:      "Typical use case, wildcards disabled with some set",
+			wildcards: false,
+			dbURL:     "postgres://postgres:postgres@postgres/dbmate_test?sslmode=disable",
+			contents: `-- migrate:up
+create table users (id serial, name text);
+grant select on all tables in schema {{DB_SCHEMA}} to {{DB_USER}};
+-- migrate:down
+drop table users;`,
+			want: want{
+				up:   "-- migrate:up\ncreate table users (id serial, name text);\ngrant select on all tables in schema {{DB_SCHEMA}} to {{DB_USER}};",
+				down: "-- migrate:down\ndrop table users;",
+			},
+		},
+		{
+			name:      "Typical use case, wildcards enabled with some set",
+			wildcards: true,
+			dbURL:     "postgres://replicant@postgres-slave/dbmate_test?sslmode=disable&search_path=microservices",
+			contents: `-- migrate:up
+create table users (id serial, name text);
+grant select on all tables in schema {{DB_SCHEMA}} to '{{DB_USER}}';
+-- migrate:down
+drop table users;`,
+			want: want{
+				up:   "-- migrate:up\ncreate table users (id serial, name text);\ngrant select on all tables in schema microservices to 'replicant';",
+				down: "-- migrate:down\ndrop table users;",
+			},
+		},
+		{
+			name:      "Test all wildcards",
+			wildcards: true,
+			dbURL:     "postgres://replicant:abc123@postgres-slave/dbmate_slave?sslmode=disable",
+			contents: `-- migrate:up
+-- DB_NAME: {{DB_NAME}}
+-- DB_USER: {{DB_USER}}
+-- DB_PASS: {{DB_PASS}}
+-- DB_SCHEMA: {{DB_SCHEMA}}
+`,
+			want: want{
+				up: `-- migrate:up
+-- DB_NAME: dbmate_slave
+-- DB_USER: replicant
+-- DB_PASS: abc123
+-- DB_SCHEMA: public
+`,
+				down: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := dbutil.MustParseURL(tt.dbURL)
+			db := New(u, nil)
+			db.AutoDumpSchema = false
+			drv, _ := db.GetDriver()
+
+			up, down, _, _, err := parseMigrationContents(tt.contents)
+			assert.Equal(t, nil, err)
+			assert.Equal(t, tt.want.up, up.ContentsReplaced(drv, tt.wildcards))
+			assert.Equal(t, tt.want.down, down.ContentsReplaced(drv, tt.wildcards))
 		})
 	}
 }

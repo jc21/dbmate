@@ -99,6 +99,11 @@ func NewApp() *cli.App {
 			Usage:   "timeout for --wait flag",
 			Value:   dbmate.DefaultWaitTimeout,
 		},
+		&cli.BoolFlag{
+			Name:    "wildcards",
+			EnvVars: []string{"DBMATE_WILDCARDS"},
+			Usage:   "enable wildcards replacement in sql files prior to execution",
+		},
 	}
 
 	app.Commands = []*cli.Command{
@@ -256,6 +261,7 @@ func action(f func(*dbmate.DB, *cli.Context) error) cli.ActionFunc {
 		db.SlaveMigrationsTableName = c.String("slave-migrations-table")
 		db.SchemaFile = c.String("schema-file")
 		db.WaitBefore = c.Bool("wait")
+		db.ReplaceWildcards = c.Bool("wildcards")
 		overrideTimeout := c.Duration("wait-timeout")
 		if overrideTimeout != 0 {
 			db.WaitTimeout = overrideTimeout

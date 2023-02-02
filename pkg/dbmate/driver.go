@@ -21,6 +21,7 @@ type Driver interface {
 	InsertMigration(dbutil.Transaction, string) error
 	DeleteMigration(dbutil.Transaction, string) error
 	Ping() error
+	GetWildcards() map[string]string
 }
 
 // DriverConfig holds configuration passed to driver constructors
