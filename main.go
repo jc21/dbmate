@@ -104,6 +104,12 @@ func NewApp() *cli.App {
 			EnvVars: []string{"DBMATE_WILDCARDS"},
 			Usage:   "enable wildcards replacement in sql files prior to execution",
 		},
+		&cli.StringFlag{
+			Name:    "post-migration-file",
+			EnvVars: []string{"DBMATE_POST_MIGRATION_FILE"},
+			Value:   "",
+			Usage:   "specify sql to be run AFTER each migration",
+		},
 	}
 
 	app.Commands = []*cli.Command{
@@ -262,9 +268,14 @@ func action(f func(*dbmate.DB, *cli.Context) error) cli.ActionFunc {
 		db.SchemaFile = c.String("schema-file")
 		db.WaitBefore = c.Bool("wait")
 		db.ReplaceWildcards = c.Bool("wildcards")
+		db.PostMigrationFile = c.String("post-migration-file")
 		overrideTimeout := c.Duration("wait-timeout")
 		if overrideTimeout != 0 {
 			db.WaitTimeout = overrideTimeout
+		}
+
+		if err = db.CheckPostMigrationFile(); err != nil {
+			return err
 		}
 
 		return f(db, c)

@@ -4,8 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/amacneil/dbmate/pkg/dbutil"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/amacneil/dbmate/pkg/dbutil"
 )
 
 func TestParseMigrationContents(t *testing.T) {

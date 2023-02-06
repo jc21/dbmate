@@ -11,6 +11,7 @@ import (
 // MigrationOptions is an interface for accessing migration options
 type MigrationOptions interface {
 	Transaction() bool
+	Post() bool
 }
 
 type migrationOptions map[string]string
@@ -21,25 +22,36 @@ func (m migrationOptions) Transaction() bool {
 	return m["transaction"] != "false"
 }
 
+// Post will define whether to run any post SQL for each block
+// Defaults to true.
+func (m migrationOptions) Post() bool {
+	return m["post"] != "false"
+}
+
 // Migration contains the migration contents and options
 type Migration struct {
 	Contents string
+	Post     string
 	Options  MigrationOptions
 }
 
 func (m *Migration) ContentsReplaced(drv Driver, doReplacement bool) string {
+	contents := m.Contents
+	if m.Options.Post() && m.Post != "" {
+		contents = contents + "\n\n" + m.Post
+	}
+
 	if doReplacement {
 		w := drv.GetWildcards()
 		if len(w) > 0 {
 			// Replace Content with Wildcards
-			newContents := m.Contents
 			for wildcard, replacement := range w {
-				newContents = strings.ReplaceAll(newContents, fmt.Sprintf("{{%s}}", wildcard), replacement)
+				contents = strings.ReplaceAll(contents, fmt.Sprintf("{{%s}}", wildcard), replacement)
 			}
-			return newContents
+			return contents
 		}
 	}
-	return m.Contents
+	return contents
 }
 
 // NewMigration constructs a Migration object
@@ -48,12 +60,26 @@ func NewMigration() Migration {
 }
 
 // parseMigration reads a migration file and returns (up, down, upSlave, downSlave Migration, error)
-func parseMigration(path string) (Migration, Migration, Migration, Migration, error) {
+func parseMigration(path, postMigrationFile string) (Migration, Migration, Migration, Migration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return NewMigration(), NewMigration(), NewMigration(), NewMigration(), err
 	}
-	return parseMigrationContents(string(data))
+
+	up, down, upSlave, downSlave, err := parseMigrationContents(string(data))
+	if err == nil && postMigrationFile != "" {
+		// Parse this file in the same way and add blocks to this migration
+		upPost, downPost, upSlavePost, downSlavePost, err := parseMigration(postMigrationFile, "")
+		if err != nil {
+			return up, down, upSlave, downSlave, err
+		}
+		up.Post = upPost.Contents
+		upSlave.Post = upSlavePost.Contents
+		down.Post = downPost.Contents
+		downSlave.Post = downSlavePost.Contents
+	}
+
+	return up, down, upSlave, downSlave, err
 }
 
 var (
@@ -166,7 +192,7 @@ func parseMigrationContents(contents string) (Migration, Migration, Migration, M
 // For example:
 //
 //	fmt.Printf("%#v", parseMigrationOptions("-- migrate:up transaction:false"))
-//	// migrationOptions{"transaction": "false"}
+//	migrationOptions{"transaction": "false", "post": "false"}
 func parseMigrationOptions(contents string) MigrationOptions {
 	options := make(migrationOptions)
 

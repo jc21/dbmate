@@ -32,17 +32,18 @@ const DefaultWaitTimeout = 60 * time.Second
 
 // Error codes
 var (
-	ErrNoMigrationFiles      = errors.New("no migration files found")
-	ErrInvalidURL            = errors.New("invalid url, have you set your --url flag or DATABASE_URL environment variable?")
-	ErrNoRollback            = errors.New("can't rollback: no migrations have been applied")
-	ErrNoRollbackSlaves      = errors.New("can't rollback: slave(s) are out of sync with master")
-	ErrCantConnect           = errors.New("unable to connect to database")
-	ErrUnsupportedDriver     = errors.New("unsupported driver")
-	ErrNoMigrationName       = errors.New("please specify a name for the new migration")
-	ErrMigrationAlreadyExist = errors.New("file already exists")
-	ErrMigrationDirNotFound  = errors.New("could not find migrations directory")
-	ErrMigrationNotFound     = errors.New("can't find migration file")
-	ErrCreateDirectory       = errors.New("unable to create directory")
+	ErrNoMigrationFiles          = errors.New("no migration files found")
+	ErrInvalidURL                = errors.New("invalid url, have you set your --url flag or DATABASE_URL environment variable?")
+	ErrNoRollback                = errors.New("can't rollback: no migrations have been applied")
+	ErrNoRollbackSlaves          = errors.New("can't rollback: slave(s) are out of sync with master")
+	ErrCantConnect               = errors.New("unable to connect to database")
+	ErrUnsupportedDriver         = errors.New("unsupported driver")
+	ErrNoMigrationName           = errors.New("please specify a name for the new migration")
+	ErrMigrationAlreadyExist     = errors.New("file already exists")
+	ErrMigrationDirNotFound      = errors.New("could not find migrations directory")
+	ErrMigrationNotFound         = errors.New("can't find migration file")
+	ErrCreateDirectory           = errors.New("unable to create directory")
+	ErrPostMigrationFileNotFound = errors.New("post migration file not found")
 )
 
 // DB allows dbmate actions to be performed on a specified database
@@ -54,6 +55,7 @@ type DB struct {
 	MigrationsTableName      string
 	SlaveMigrationsTableName string
 	SchemaFile               string
+	PostMigrationFile        string
 	Verbose                  bool
 	WaitBefore               bool
 	ReplaceWildcards         bool
@@ -501,7 +503,7 @@ func (db *DB) migrate(drv Driver, slavesDrv []Driver) error {
 
 		fmt.Fprintf(db.Log, "Applying: %s (master: %v, slaves: %d)\n", filename, applyToMaster, len(applyToSlaves))
 
-		up, _, upSlave, _, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
+		up, _, upSlave, _, err := parseMigration(filepath.Join(db.MigrationsDir, filename), db.PostMigrationFile)
 		if err != nil {
 			return err
 		}
@@ -700,7 +702,7 @@ func (db *DB) Rollback() error {
 
 	fmt.Fprintf(db.Log, "Rolling back: %s\n", filename)
 
-	_, down, _, downSlave, err := parseMigration(filepath.Join(db.MigrationsDir, filename))
+	_, down, _, downSlave, err := parseMigration(filepath.Join(db.MigrationsDir, filename), db.PostMigrationFile)
 	if err != nil {
 		return err
 	}
@@ -844,4 +846,15 @@ func (db *DB) CheckMigrationsStatus(drv Driver) ([]StatusResult, error) {
 	}
 
 	return results, nil
+}
+
+// GetDriver initializes the appropriate database driver
+func (db *DB) CheckPostMigrationFile() error {
+	if db.PostMigrationFile != "" {
+		// Check that this file exists on disk
+		if _, err := os.Stat(db.PostMigrationFile); err != nil {
+			return ErrPostMigrationFileNotFound
+		}
+	}
+	return nil
 }
