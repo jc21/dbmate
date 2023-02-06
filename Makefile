@@ -31,7 +31,7 @@ clean:
 
 .PHONY: build
 build: clean
-	go build -o dist/$(OUTPUT) $(FLAGS) .
+	go build -o dist/$(OUTPUT) $(FLAGS) -buildvcs=false .
 
 .PHONY: ls
 ls:
