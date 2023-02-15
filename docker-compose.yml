@@ -14,8 +14,8 @@ services:
     environment:
       CLICKHOUSE_TEST_URL: clickhouse://clickhouse:9000?database=dbmate_test
       MYSQL_TEST_URL: mysql://root:root@mysql/dbmate_test
-      POSTGRES_TEST_URL: postgres://postgres:postgres@postgres/dbmate_test?sslmode=disable
-      POSTGRES_TEST_URL_SLAVE: postgres://postgres:postgres@postgres-slave/dbmate_test?sslmode=disable
+      POSTGRES_TEST_URL: postgres://dbrole:postgres@postgres/dbmate_test?sslmode=disable
+      POSTGRES_TEST_URL_SLAVE: postgres://dbrole:dbrole@postgres-slave/dbmate_test?sslmode=disable&role=dbadmin
       SQLITE_TEST_URL: sqlite3:/tmp/dbmate_test.sqlite3
 
   dbmate:
@@ -33,11 +33,15 @@ services:
     image: postgres:10
     environment:
       POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./testdata/pg-init:/docker-entrypoint-initdb.d
 
   postgres-slave:
     image: postgres:10
     environment:
       POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./testdata/pg-init:/docker-entrypoint-initdb.d
 
   clickhouse:
     image: clickhouse/clickhouse-server:22.8
