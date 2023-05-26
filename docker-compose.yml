@@ -24,7 +24,6 @@ services:
     build:
       context: .
       target: release
-    image: dbmate_release
 
   mysql:
     image: mysql/mysql-server:8.0

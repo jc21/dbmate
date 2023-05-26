@@ -1,6 +1,3 @@
-//go:build cgo
-// +build cgo
-
 package sqlite
 
 import (
@@ -385,7 +382,7 @@ func TestSQLitePing(t *testing.T) {
 
 	// ping database should fail
 	err = drv.Ping()
-	require.EqualError(t, err, "unable to open database file: is a directory")
+	require.EqualError(t, err, "unable to open database file: out of memory (14)")
 }
 
 func TestSQLiteQuotedMigrationsTableName(t *testing.T) {

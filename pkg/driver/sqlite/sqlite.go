@@ -1,6 +1,3 @@
-//go:build cgo
-// +build cgo
-
 package sqlite
 
 import (
@@ -17,7 +14,7 @@ import (
 	"github.com/amacneil/dbmate/v2/pkg/dbutil"
 
 	"github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3" // database/sql driver
+	_ "modernc.org/sqlite" // database/sql driver
 )
 
 func init() {
@@ -72,7 +69,7 @@ func ConnectionString(u *url.URL) string {
 
 // Open creates a new database connection
 func (drv *Driver) Open() (*sql.DB, error) {
-	return sql.Open("sqlite3", ConnectionString(drv.databaseURL))
+	return sql.Open("sqlite", ConnectionString(drv.databaseURL))
 }
 
 // CreateDatabase creates the specified database

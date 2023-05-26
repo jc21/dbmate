@@ -1,6 +1,3 @@
-# enable cgo to build sqlite
-export CGO_ENABLED = 1
-
 # strip binaries
 FLAGS := -tags sqlite_omit_load_extension,sqlite_json -ldflags '-s'
 
