@@ -7,7 +7,6 @@ require (
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
-	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/stretchr/testify v1.8.2
 	github.com/urfave/cli/v2 v2.25.3
 	github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04
@@ -51,3 +50,5 @@ require (
 	modernc.org/strutil v1.1.3 // indirect
 	modernc.org/token v1.0.1 // indirect
 )
+
+replace modernc.org/sqlite => gitlab.com/jc21com/sqlite v1.22.2-0.20230527022643-b56cedb3bc85

@@ -6,8 +6,8 @@ import (
 
 	"github.com/amacneil/dbmate/v2/pkg/dbutil"
 
-	_ "github.com/mattn/go-sqlite3" // database/sql driver
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite" // database/sql driver
 )
 
 func TestDatabaseName(t *testing.T) {
@@ -39,7 +39,7 @@ func TestTrimLeadingSQLComments(t *testing.T) {
 const sqliteMemoryDB = "file:dbutil.sqlite3?mode=memory&cache=shared"
 
 func TestQueryColumn(t *testing.T) {
-	db, err := sql.Open("sqlite3", sqliteMemoryDB)
+	db, err := sql.Open("sqlitenative", sqliteMemoryDB)
 	require.NoError(t, err)
 
 	val, err := dbutil.QueryColumn(db, "select 'foo_' || val from (select ? as val union select ?)",
@@ -49,7 +49,7 @@ func TestQueryColumn(t *testing.T) {
 }
 
 func TestQueryValue(t *testing.T) {
-	db, err := sql.Open("sqlite3", sqliteMemoryDB)
+	db, err := sql.Open("sqlitenative", sqliteMemoryDB)
 	require.NoError(t, err)
 
 	val, err := dbutil.QueryValue(db, "select $1 + $2", "5", 2)
